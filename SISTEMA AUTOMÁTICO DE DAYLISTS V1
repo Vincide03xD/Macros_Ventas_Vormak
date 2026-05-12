@@ -1,0 +1,434 @@
+Option Explicit
+
+' =========================================================
+'   SISTEMA AUTOMÁTICO DE DAYLISTS
+'   VERSION COMPLETA - UN SOLO MODULO
+'
+'   HOJAS NECESARIAS:
+'   - DAYLIST
+'   - EVENTOS_ORDINARIO
+'   - EVENTOS_PARO
+'
+'   CELDAS DE CONTROL:
+'   AC4 = Modo ("DIA", "SEMANA", "MES")
+'   AB4 = Fecha específica
+'   AA4 = Número de semana
+'   Z4  = Mes
+'   Y4  = Año
+'
+'   BOTONES:
+'   - GenerarDaylistOrdinario
+'   - GenerarDaylistParo
+'
+' =========================================================
+
+Private Const HOJA_DAYLIST As String = "DAYLIST"
+Private Const HOJA_ORDINARIO As String = "EVENTOS_ORDINARIO"
+Private Const HOJA_PARO As String = "EVENTOS_PARO"
+
+Private Const CELDA_MODO As String = "AC4"
+Private Const CELDA_FECHA As String = "AB4"
+Private Const CELDA_SEMANA As String = "AA4"
+Private Const CELDA_MES As String = "Z4"
+Private Const CELDA_ANIO As String = "Y4"
+
+Private Const FILA_INICIO_DATOS As Long = 7
+Private Const COLUMNA_INICIO As String = "Y"
+
+' =========================================================
+'               BOTONES PRINCIPALES
+' =========================================================
+
+Sub GenerarDaylistOrdinario()
+
+    GenerarDaylists HOJA_ORDINARIO, "ORDINARIO"
+
+End Sub
+
+Sub GenerarDaylistParo()
+
+    GenerarDaylists HOJA_PARO, "PARO"
+
+End Sub
+
+' =========================================================
+'               PROCESO PRINCIPAL
+' =========================================================
+
+Private Sub GenerarDaylists(ByVal hojaOrigen As String, ByVal tipo As String)
+
+    Dim wsDaylist As Worksheet
+    Dim modo As String
+    
+    Set wsDaylist = ActiveWorkbook.Sheets(HOJA_DAYLIST)
+    
+    modo = UCase(Trim(wsDaylist.Range(CELDA_MODO).Value))
+    
+    If modo = "" Then
+        MsgBox "Debes seleccionar un modo en AC4:" & vbCrLf & _
+               "- DIA" & vbCrLf & _
+               "- SEMANA" & vbCrLf & _
+               "- MES", vbExclamation
+        Exit Sub
+    End If
+    
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.DisplayAlerts = False
+    
+    On Error GoTo ErrorHandler
+    
+    Select Case modo
+    
+        Case "DIA"
+            ProcesarDia hojaOrigen
+            
+        Case "SEMANA"
+            ProcesarSemana hojaOrigen
+            
+        Case "MES"
+            ProcesarMes hojaOrigen
+            
+        Case Else
+        
+            MsgBox "Modo inválido en AC4." & vbCrLf & _
+                   "Usa únicamente:" & vbCrLf & _
+                   "DIA" & vbCrLf & _
+                   "SEMANA" & vbCrLf & _
+                   "MES", vbCritical
+    
+    End Select
+    
+Finalizar:
+
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+    Application.DisplayAlerts = True
+    
+    Exit Sub
+
+ErrorHandler:
+
+    MsgBox "Error: " & Err.Description, vbCritical
+    
+    Resume Finalizar
+
+End Sub
+
+' =========================================================
+'               PROCESAR DIA
+' =========================================================
+
+Private Sub ProcesarDia(ByVal hojaOrigen As String)
+
+    Dim ws As Worksheet
+    Dim fechaObjetivo As Date
+    
+    Set ws = ActiveWorkbook.Sheets(HOJA_DAYLIST)
+    
+    If Not IsDate(ws.Range(CELDA_FECHA).Value) Then
+    
+        MsgBox "La fecha en AB4 no es válida.", vbExclamation
+        Exit Sub
+        
+    End If
+    
+    fechaObjetivo = CDate(ws.Range(CELDA_FECHA).Value)
+    
+    GenerarDaylistPorFecha hojaOrigen, fechaObjetivo
+
+End Sub
+
+' =========================================================
+'               PROCESAR SEMANA
+' =========================================================
+
+Private Sub ProcesarSemana(ByVal hojaOrigen As String)
+
+    Dim ws As Worksheet
+    Dim numeroSemana As Long
+    Dim anio As Long
+    
+    Dim fechaInicio As Date
+    Dim fechaFin As Date
+    Dim fechaActual As Date
+    
+    Dim diasSinActividad As String
+    
+    Set ws = ActiveWorkbook.Sheets(HOJA_DAYLIST)
+    
+    If ws.Range(CELDA_SEMANA).Value = "" Then
+        MsgBox "Debes ingresar un número de semana en AA4.", vbExclamation
+        Exit Sub
+    End If
+    
+    If ws.Range(CELDA_ANIO).Value = "" Then
+        MsgBox "Debes ingresar un año en Y4.", vbExclamation
+        Exit Sub
+    End If
+    
+    numeroSemana = CLng(ws.Range(CELDA_SEMANA).Value)
+    anio = CLng(ws.Range(CELDA_ANIO).Value)
+    
+    fechaInicio = PrimerDiaSemanaISO(anio, numeroSemana)
+    fechaFin = fechaInicio + 6
+    
+    diasSinActividad = ""
+    
+    For fechaActual = fechaInicio To fechaFin
+    
+        If Not GenerarDaylistPorFecha(hojaOrigen, fechaActual) Then
+        
+            diasSinActividad = diasSinActividad & _
+                               Format(fechaActual, "dd/mm/yyyy") & vbCrLf
+        
+        End If
+        
+    Next fechaActual
+    
+    If diasSinActividad <> "" Then
+    
+        MsgBox "Días sin actividades:" & vbCrLf & vbCrLf & _
+               diasSinActividad, vbInformation
+    
+    Else
+    
+        MsgBox "Todas las Daylists fueron generadas correctamente.", vbInformation
+    
+    End If
+
+End Sub
+
+' =========================================================
+'               PROCESAR MES
+' =========================================================
+
+Private Function ObtenerNumeroMes(valorMes As Variant) As Long
+
+    Dim textoMes As String
+    
+    If IsNumeric(valorMes) Then
+    
+        ObtenerNumeroMes = CLng(valorMes)
+        Exit Function
+    
+    End If
+    
+    textoMes = UCase(Trim(valorMes))
+    
+    Select Case textoMes
+    
+        Case "ENERO"
+            ObtenerNumeroMes = 1
+            
+        Case "FEBRERO"
+            ObtenerNumeroMes = 2
+            
+        Case "MARZO"
+            ObtenerNumeroMes = 3
+            
+        Case "ABRIL"
+            ObtenerNumeroMes = 4
+            
+        Case "MAYO"
+            ObtenerNumeroMes = 5
+            
+        Case "JUNIO"
+            ObtenerNumeroMes = 6
+            
+        Case "JULIO"
+            ObtenerNumeroMes = 7
+            
+        Case "AGOSTO"
+            ObtenerNumeroMes = 8
+            
+        Case "SEPTIEMBRE", "SETIEMBRE"
+            ObtenerNumeroMes = 9
+            
+        Case "OCTUBRE"
+            ObtenerNumeroMes = 10
+            
+        Case "NOVIEMBRE"
+            ObtenerNumeroMes = 11
+            
+        Case "DICIEMBRE"
+            ObtenerNumeroMes = 12
+            
+        Case Else
+        
+            MsgBox "Mes inválido en Z4.", vbCritical
+            ObtenerNumeroMes = 0
+    
+    End Select
+
+End Function
+
+' =========================================================
+'       GENERAR DAYLIST PARA UNA FECHA
+' =========================================================
+
+Private Function GenerarDaylistPorFecha(ByVal hojaOrigen As String, _
+                                        ByVal fechaObjetivo As Date) As Boolean
+
+    Dim wsOrigen As Worksheet
+    Dim wsDaylist As Worksheet
+    
+    Dim ultimaFila As Long
+    Dim filaDestino As Long
+    
+    Dim i As Long
+    Dim registrosEncontrados As Long
+    
+    Set wsOrigen = ActiveWorkbook.Sheets(hojaOrigen)
+    Set wsDaylist = ActiveWorkbook.Sheets(HOJA_DAYLIST)
+    
+    LimpiarTablaDaylist
+    
+    ultimaFila = wsOrigen.Cells(wsOrigen.Rows.Count, "A").End(xlUp).Row
+    
+    filaDestino = FILA_INICIO_DATOS
+    
+    registrosEncontrados = 0
+    
+    For i = 2 To ultimaFila
+    
+        If IsDate(wsOrigen.Cells(i, 7).Value) Then
+        
+            If DateValue(wsOrigen.Cells(i, 7).Value) = DateValue(fechaObjetivo) Then
+            
+                wsDaylist.Cells(filaDestino, "Y").Value = wsOrigen.Cells(i, 1).Value
+                wsDaylist.Cells(filaDestino, "Z").Value = wsOrigen.Cells(i, 2).Value
+                wsDaylist.Cells(filaDestino, "AA").Value = wsOrigen.Cells(i, 3).Value
+                wsDaylist.Cells(filaDestino, "AB").Value = wsOrigen.Cells(i, 4).Value
+                wsDaylist.Cells(filaDestino, "AC").Value = wsOrigen.Cells(i, 5).Value
+                wsDaylist.Cells(filaDestino, "AD").Value = wsOrigen.Cells(i, 6).Value   ' Fecha corte de renta
+                wsDaylist.Cells(filaDestino, "AE").Value = wsOrigen.Cells(i, 7).Value   ' Fecha
+                
+                filaDestino = filaDestino + 1
+                
+                registrosEncontrados = registrosEncontrados + 1
+            
+            End If
+        
+        End If
+    
+    Next i
+    
+    If registrosEncontrados > 0 Then
+    
+        ActualizarEncabezadoFecha fechaObjetivo
+        
+        ExportarPDF fechaObjetivo
+        
+        GenerarDaylistPorFecha = True
+    
+    Else
+    
+        GenerarDaylistPorFecha = False
+    
+    End If
+
+End Function
+
+' =========================================================
+'           LIMPIAR TABLA DAYLIST
+' =========================================================
+
+Private Sub LimpiarTablaDaylist()
+
+    Dim ws As Worksheet
+    
+    Set ws = ActiveWorkbook.Sheets(HOJA_DAYLIST)
+    
+    ws.Range("Y7:AE2000").ClearContents
+
+End Sub
+
+' =========================================================
+'       ACTUALIZAR FECHA EN ENCABEZADO
+' =========================================================
+
+Private Sub ActualizarEncabezadoFecha(ByVal fechaActual As Date)
+
+    Dim ws As Worksheet
+    
+    Set ws = ActiveWorkbook.Sheets(HOJA_DAYLIST)
+    
+    ws.Range("H3").Value = Day(fechaActual)
+    ws.Range("I3").Value = Month(fechaActual)
+    ws.Range("J3").Value = Year(fechaActual)
+    ws.Range("K2").Value = "Semana " & _
+                           WorksheetFunction.WeekNum(fechaActual, 2)
+
+End Sub
+
+' =========================================================
+'               EXPORTAR PDF
+' =========================================================
+
+Private Sub ExportarPDF(ByVal fechaPDF As Date)
+
+    Dim ws As Worksheet
+    
+    Dim ruta As String
+    Dim nombrePDF As String
+    Dim rutaCompleta As String
+    
+    Set ws = ActiveWorkbook.Sheets(HOJA_DAYLIST)
+    
+    ' Verificar que el archivo Excel ya fue guardado
+    If ActiveWorkbook.Path = "" Then
+    
+        MsgBox "Debes guardar primero el archivo Excel antes de generar PDFs.", vbExclamation
+        Exit Sub
+    
+    End If
+    
+    ' Carpeta destino
+    ruta = ActiveWorkbook.Path & "\DAYLISTS_GENERADAS"
+    
+    ' Crear carpeta si no existe
+    If Dir(ruta, vbDirectory) = "" Then
+    
+        MkDir ruta
+    
+    End If
+    
+    ' Nombre PDF
+    nombrePDF = "DAYLIST_" & Format(fechaPDF, "dd-mm-yyyy") & ".pdf"
+    
+    rutaCompleta = ruta & "\" & nombrePDF
+    
+    ' Exportar
+    ws.ExportAsFixedFormat _
+        Type:=xlTypePDF, _
+        Filename:=rutaCompleta, _
+        Quality:=xlQualityStandard, _
+        IncludeDocProperties:=True, _
+        IgnorePrintAreas:=False, _
+        OpenAfterPublish:=False
+    
+    Debug.Print "PDF generado: " & rutaCompleta
+
+End Sub
+
+' =========================================================
+'           PRIMER DIA SEMANA ISO
+' =========================================================
+
+Private Function PrimerDiaSemanaISO(ByVal anio As Long, _
+                                    ByVal semana As Long) As Date
+
+    Dim cuartoEnero As Date
+    
+    cuartoEnero = DateSerial(anio, 1, 4)
+    
+    PrimerDiaSemanaISO = cuartoEnero - _
+                         Weekday(cuartoEnero, vbMonday) + 1 + _
+                         ((semana - 1) * 7)
+
+End Function
+
+
+
+
